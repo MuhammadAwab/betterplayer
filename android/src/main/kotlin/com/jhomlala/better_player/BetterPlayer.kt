@@ -7,8 +7,7 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.*
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -38,8 +37,10 @@ import com.google.android.exoplayer2.ui.PlayerNotificationManager.BitmapCallback
 import androidx.work.OneTimeWorkRequest
 import android.support.v4.media.session.PlaybackStateCompat
 import android.support.v4.media.MediaMetadataCompat
+import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Surface
+import android.view.SurfaceView
 import androidx.lifecycle.Observer
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
@@ -75,6 +76,7 @@ internal class BetterPlayer(
     context: Context,
     private val eventChannel: EventChannel,
     private val textureEntry: SurfaceTextureEntry,
+    private val watermarkText: String,
     customDefaultLoadControl: CustomDefaultLoadControl?,
     result: MethodChannel.Result
 ) {
@@ -98,6 +100,7 @@ internal class BetterPlayer(
         customDefaultLoadControl ?: CustomDefaultLoadControl()
     private var lastSendBufferedPosition = 0L
     private var adsLoader: ImaAdsLoader? = null
+    private var metrics:DisplayMetrics
 
     init {
         val loadBuilder = DefaultLoadControl.Builder()
@@ -113,9 +116,10 @@ internal class BetterPlayer(
             .setLoadControl(loadControl)
             .build()
         adsLoader = ImaAdsLoader.Builder(context).build()
+        metrics = context.resources.displayMetrics
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
-        setupVideoPlayer(eventChannel, textureEntry, result)
+        setupVideoPlayer(eventChannel, textureEntry, watermarkText, result)
     }
 
     fun setDataSource(
@@ -203,7 +207,7 @@ internal class BetterPlayer(
             .setAdsLoaderProvider { adsLoader }
         //val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
         adsLoader?.setPlayer(exoPlayer);
-        val mediaSource = mediaSourceFactory.createMediaSource(fromUri(uri))
+        //val mediaSource = mediaSourceFactory.createMediaSource(fromUri(uri))
 
         // Create the MediaItem to play, specifying the content URI and ad tag URI.
         val mediaItem = MediaItem.Builder()
@@ -456,7 +460,7 @@ internal class BetterPlayer(
     }
 
     private fun setupVideoPlayer(
-        eventChannel: EventChannel, textureEntry: SurfaceTextureEntry, result: MethodChannel.Result
+        eventChannel: EventChannel, textureEntry: SurfaceTextureEntry, watermarkText: String, result: MethodChannel.Result
     ) {
         eventChannel.setStreamHandler(
             object : EventChannel.StreamHandler {
@@ -469,6 +473,15 @@ internal class BetterPlayer(
                 }
             })
         surface = Surface(textureEntry.surfaceTexture())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val canvas = surface?.lockHardwareCanvas()
+            val paint = Paint()
+            paint.textAlign = Paint.Align.CENTER
+            paint.textSize = 20F
+            paint.color = Color.RED
+            canvas?.drawText(watermarkText, metrics.xdpi, metrics.ydpi, paint)
+            surface?.unlockCanvasAndPost(canvas)
+        };
         exoPlayer?.setVideoSurface(surface)
         setAudioAttributes(exoPlayer, true)
         exoPlayer?.addListener(object : Player.Listener {

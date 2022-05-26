@@ -40,6 +40,7 @@ import android.support.v4.media.session.PlaybackStateCompat
 import android.support.v4.media.MediaMetadataCompat
 import android.util.Log
 import android.view.Surface
+import android.view.SurfaceView
 import androidx.lifecycle.Observer
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
@@ -84,6 +85,7 @@ internal class BetterPlayer(
     private val loadControl: LoadControl
     private var isInitialized = false
     private var surface: Surface? = null
+    private var surfaceView: SurfaceView? = null
     private var key: String? = null
     private var playerNotificationManager: PlayerNotificationManager? = null
     private var refreshHandler: Handler? = null
@@ -201,15 +203,21 @@ internal class BetterPlayer(
         }
         val mediaSourceFactory: MediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
             .setAdsLoaderProvider { adsLoader }
+            //.setAdViewProvider { surface }
         //val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
         adsLoader?.setPlayer(exoPlayer);
-        val mediaSource = mediaSourceFactory.createMediaSource(fromUri(uri))
+        val mediaSource = mediaSourceFactory.createMediaSource(
+            MediaItem.Builder().setAdsConfiguration(AdsConfiguration.Builder(adUri).build()).build()
+        )
+            //.createMediaSource(fromUri(uri))
+
+
 
         // Create the MediaItem to play, specifying the content URI and ad tag URI.
-        val mediaItem = MediaItem.Builder()
-            .setUri(uri)
-            .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
-            .build()
+        //val mediaItem = MediaItem.Builder()
+        //    .setUri(uri)
+        //    .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
+        //    .build()
 
 
         /*if (overriddenDuration != 0L) {
@@ -219,7 +227,7 @@ internal class BetterPlayer(
             exoPlayer?.setMediaSource(mediaSource)
         }*/
 
-        exoPlayer?.setMediaItem(mediaItem)
+        exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
         result.success(null)
     }

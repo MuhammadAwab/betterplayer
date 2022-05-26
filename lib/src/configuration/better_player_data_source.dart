@@ -17,6 +17,8 @@ class BetterPlayerDataSource {
   ///Url of the video
   final String url;
 
+  final String? adUrl;
+
   ///Subtitles configuration
   final List<BetterPlayerSubtitlesSource>? subtitles;
 
@@ -78,7 +80,8 @@ class BetterPlayerDataSource {
 
   BetterPlayerDataSource(
     this.type,
-    this.url, {
+    this.url,{
+        this.adUrl,
     this.bytes,
     this.subtitles,
     this.liveStream = false,
@@ -109,10 +112,11 @@ class BetterPlayerDataSource {
   ///Factory method to build network data source which uses url as data source
   ///Bytes parameter is not used in this data source.
   factory BetterPlayerDataSource.network(
-    String url, {
+    String url,{
     List<BetterPlayerSubtitlesSource>? subtitles,
     bool? liveStream,
     Map<String, String>? headers,
+        String? adUrl,
     bool? useAsmsSubtitles,
     bool? useAsmsTracks,
     bool? useAsmsAudioTracks,
@@ -130,6 +134,7 @@ class BetterPlayerDataSource {
     return BetterPlayerDataSource(
       BetterPlayerDataSourceType.network,
       url,
+      adUrl: adUrl,
       subtitles: subtitles,
       liveStream: liveStream,
       headers: headers,
@@ -163,6 +168,7 @@ class BetterPlayerDataSource {
     return BetterPlayerDataSource(
       BetterPlayerDataSourceType.file,
       url,
+      adUrl: "",
       subtitles: subtitles,
       useAsmsSubtitles: useAsmsSubtitles,
       useAsmsTracks: useAsmsTracks,
@@ -192,6 +198,7 @@ class BetterPlayerDataSource {
     return BetterPlayerDataSource(
       BetterPlayerDataSourceType.memory,
       "",
+      adUrl: "",
       videoExtension: videoExtension,
       bytes: bytes,
       subtitles: subtitles,
@@ -231,6 +238,7 @@ class BetterPlayerDataSource {
     return BetterPlayerDataSource(
       type ?? this.type,
       url ?? this.url,
+      adUrl: "",
       bytes: bytes ?? this.bytes,
       subtitles: subtitles ?? this.subtitles,
       liveStream: liveStream ?? this.liveStream,

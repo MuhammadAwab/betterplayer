@@ -207,6 +207,7 @@ class DataSource {
   DataSource({
     required this.sourceType,
     this.uri,
+    this.adUri,
     this.formatHint,
     this.asset,
     this.package,
@@ -243,6 +244,8 @@ class DataSource {
   /// This will be in different formats depending on the [DataSourceType] of
   /// the original video.
   final String? uri;
+
+  final String? adUri;
 
   /// **Android only**. Will override the platform's generic file format
   /// detection with whatever is set here.

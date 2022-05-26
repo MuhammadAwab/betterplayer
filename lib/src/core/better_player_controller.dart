@@ -443,6 +443,7 @@ class BetterPlayerController {
       case BetterPlayerDataSourceType.network:
         await videoPlayerController?.setNetworkDataSource(
           betterPlayerDataSource.url,
+          adUrl: betterPlayerDataSource.adUrl,
           headers: _getHeaders(),
           useCache:
               _betterPlayerDataSource!.cacheConfiguration?.useCache ?? false,
@@ -1245,6 +1246,7 @@ class BetterPlayerController {
     final dataSource = DataSource(
       sourceType: DataSourceType.network,
       uri: betterPlayerDataSource.url,
+      adUri: betterPlayerDataSource.adUrl,
       useCache: true,
       headers: betterPlayerDataSource.headers,
       maxCacheSize: cacheConfig.maxCacheSize,

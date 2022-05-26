@@ -56,6 +56,7 @@ class MockVideoPlayerController extends VideoPlayerController {
   @override
   Future<void> setNetworkDataSource(
     String dataSource, {
+      String? adUrl,
     VideoFormat? formatHint,
     Map<String, String?>? headers,
     bool useCache = false,

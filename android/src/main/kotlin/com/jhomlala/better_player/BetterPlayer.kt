@@ -33,8 +33,6 @@ import com.google.android.exoplayer2.drm.UnsupportedDrmException
 import com.google.android.exoplayer2.drm.DummyExoMediaDrm
 import com.google.android.exoplayer2.drm.LocalMediaDrmCallback
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
-import com.google.android.exoplayer2.source.MediaSource
-import com.google.android.exoplayer2.source.ClippingMediaSource
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.MediaDescriptionAdapter
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.BitmapCallback
 import androidx.work.OneTimeWorkRequest
@@ -48,17 +46,21 @@ import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
 import com.google.android.exoplayer2.source.dash.DashMediaSource
 import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource
 import com.google.android.exoplayer2.source.hls.HlsMediaSource
-import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory
 import io.flutter.plugin.common.EventChannel.EventSink
 import androidx.media.session.MediaButtonReceiver
 import androidx.work.Data
 import com.google.android.exoplayer2.*
+import com.google.android.exoplayer2.MediaItem.AdsConfiguration
+import com.google.android.exoplayer2.MediaItem.fromUri
 import com.google.android.exoplayer2.audio.AudioAttributes
 import com.google.android.exoplayer2.drm.DrmSessionManagerProvider
+import com.google.android.exoplayer2.ext.ima.ImaAdsLoader
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
+import com.google.android.exoplayer2.source.*
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector.SelectionOverride
 import com.google.android.exoplayer2.trackselection.TrackSelectionOverrides
+import com.google.android.exoplayer2.ui.AdViewProvider
 import com.google.android.exoplayer2.upstream.DataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.util.Util
@@ -95,6 +97,7 @@ internal class BetterPlayer(
     private val customDefaultLoadControl: CustomDefaultLoadControl =
         customDefaultLoadControl ?: CustomDefaultLoadControl()
     private var lastSendBufferedPosition = 0L
+    private var adsLoader: ImaAdsLoader? = null
 
     init {
         val loadBuilder = DefaultLoadControl.Builder()
@@ -109,6 +112,7 @@ internal class BetterPlayer(
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .build()
+        adsLoader = ImaAdsLoader.Builder(context).build()
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
         setupVideoPlayer(eventChannel, textureEntry, result)
@@ -118,6 +122,7 @@ internal class BetterPlayer(
         context: Context,
         key: String?,
         dataSource: String?,
+        adSource: String?,
         formatHint: String?,
         result: MethodChannel.Result,
         headers: Map<String, String>?,
@@ -133,6 +138,7 @@ internal class BetterPlayer(
         this.key = key
         isInitialized = false
         val uri = Uri.parse(dataSource)
+        val adUri = Uri.parse(adSource)
         var dataSourceFactory: DataSource.Factory?
         val userAgent = getUserAgent(headers)
         if (licenseUrl != null && licenseUrl.isNotEmpty()) {
@@ -193,13 +199,27 @@ internal class BetterPlayer(
         } else {
             dataSourceFactory = DefaultDataSource.Factory(context)
         }
-        val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
-        if (overriddenDuration != 0L) {
+        val mediaSourceFactory: MediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+            .setAdsLoaderProvider { adsLoader }
+        //val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
+        adsLoader?.setPlayer(exoPlayer);
+        val mediaSource = mediaSourceFactory.createMediaSource(fromUri(uri))
+
+        // Create the MediaItem to play, specifying the content URI and ad tag URI.
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
+            .build()
+
+
+        /*if (overriddenDuration != 0L) {
             val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
             exoPlayer?.setMediaSource(clippingMediaSource)
         } else {
             exoPlayer?.setMediaSource(mediaSource)
-        }
+        }*/
+
+        exoPlayer?.setMediaItem(mediaItem)
         exoPlayer?.prepare()
         result.success(null)
     }

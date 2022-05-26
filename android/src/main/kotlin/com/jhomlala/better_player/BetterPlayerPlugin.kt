@@ -117,7 +117,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                     )
                 }
                 val player = BetterPlayer(
-                    flutterState?.applicationContext!!, eventChannel, handle,"Better Player",
+                    flutterState?.applicationContext!!, eventChannel, handle,
                     customDefaultLoadControl, result
                 )
                 videoPlayers.put(handle.id(), player)

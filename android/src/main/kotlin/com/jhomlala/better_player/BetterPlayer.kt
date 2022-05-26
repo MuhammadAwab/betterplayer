@@ -207,7 +207,10 @@ internal class BetterPlayer(
         //val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
         adsLoader?.setPlayer(exoPlayer);
         val mediaSource = mediaSourceFactory.createMediaSource(
-            MediaItem.Builder().setAdsConfiguration(AdsConfiguration.Builder(adUri).build()).build()
+            MediaItem.Builder()
+                .setUri(uri)
+                .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
+                .build()
         )
             //.createMediaSource(fromUri(uri))
 
@@ -220,14 +223,14 @@ internal class BetterPlayer(
         //    .build()
 
 
-        /*if (overriddenDuration != 0L) {
+        if (overriddenDuration != 0L) {
             val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
             exoPlayer?.setMediaSource(clippingMediaSource)
         } else {
             exoPlayer?.setMediaSource(mediaSource)
-        }*/
+        }
 
-        exoPlayer?.setMediaSource(mediaSource)
+        //exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
         result.success(null)
     }

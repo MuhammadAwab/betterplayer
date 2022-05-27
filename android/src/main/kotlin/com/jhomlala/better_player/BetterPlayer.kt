@@ -435,6 +435,7 @@ internal class BetterPlayer(
         val mediaItemBuilder = MediaItem.Builder()
         mediaItemBuilder.setUri(uri)
         if (adUri.toString().isNotEmpty()) {
+            Log.d("AD URI TAG", "AD URI IS NOT NULL AND COMES HERE");
             val adsConfiguration: AdsConfiguration = AdsConfiguration.Builder(adUri).build()
             mediaItemBuilder.setAdsConfiguration(adsConfiguration)
         }

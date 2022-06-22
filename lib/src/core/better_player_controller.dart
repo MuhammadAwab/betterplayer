@@ -951,21 +951,21 @@ class BetterPlayerController {
   }
 
   ///Set different resolution (quality) for video
-  void setResolution(String url) async {
+  void setResolution(String url,String? adsUrl) async {
     if (videoPlayerController == null) {
       throw StateError("The data source has not been initialized");
     }
     final position = await videoPlayerController!.position;
     final wasPlayingBeforeChange = isPlaying()!;
     pause();
-    await setupDataSource(betterPlayerDataSource!.copyWith(url: url));
+    await setupDataSource(betterPlayerDataSource!.copyWith(url: url,adUrl: adsUrl));
     seekTo(position!);
     if (wasPlayingBeforeChange) {
       play();
     }
     _postEvent(BetterPlayerEvent(
       BetterPlayerEventType.changedResolution,
-      parameters: <String, dynamic>{"url": url},
+      parameters: <String, dynamic>{"url": url,"adUrl":adsUrl},
     ));
   }
 
@@ -1140,6 +1140,12 @@ class BetterPlayerController {
         break;
       case VideoEventType.seek:
         _postEvent(BetterPlayerEvent(BetterPlayerEventType.seekTo));
+        break;
+      case VideoEventType.adStop:
+        _postEvent(BetterPlayerEvent(BetterPlayerEventType.onAdCompletion));
+        break;
+      case VideoEventType.adStart:
+        _postEvent(BetterPlayerEvent(BetterPlayerEventType.onAdStart));
         break;
       case VideoEventType.completed:
         final VideoPlayerValue? videoValue = videoPlayerController?.value;

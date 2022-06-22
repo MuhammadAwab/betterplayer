@@ -10,6 +10,8 @@ import 'package:better_player/src/video_player/video_player_platform_interface.d
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../better_player.dart';
+
 final VideoPlayerPlatform _videoPlayerPlatform = VideoPlayerPlatform.instance
 // This will clear all open videos on the platform when a full restart is
 // performed.
@@ -46,7 +48,7 @@ class VideoPlayerValue {
   /// The total duration of the video.
   ///
   /// Is null when [initialized] is false.
-  final Duration? duration;
+  late final Duration? duration;
 
   /// The current playback position.
   final Duration position;
@@ -197,6 +199,8 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   @visibleForTesting
   int? get textureId => _textureId;
 
+  final List<Function(BetterPlayerEvent)?> _eventListeners = [];
+
   /// Attempts to open the given [dataSource] and load metadata about the video.
   Future<void> _create() async {
     _textureId = await _videoPlayerPlatform.create(
@@ -254,6 +258,17 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           break;
         case VideoEventType.unknown:
           break;
+        case VideoEventType.adStart:
+          // TODO: Handle this case.
+          break;
+        case VideoEventType.adStop:
+          // TODO: Handle this case.
+          print("AT LEAST AD ENDING IS CALLED NOW");
+          value = value.copyWith(
+              duration: event.duration,
+          );
+          _postEvent(BetterPlayerEvent(BetterPlayerEventType.onAdCompletion));
+          break;
       }
     }
 
@@ -273,6 +288,14 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     _eventSubscription = _videoPlayerPlatform
         .videoEventsFor(_textureId)
         .listen(eventListener, onError: errorListener);
+  }
+
+  void _postEvent(BetterPlayerEvent betterPlayerEvent) {
+    for (final Function(BetterPlayerEvent)? eventListener in _eventListeners) {
+      if (eventListener != null) {
+        eventListener(betterPlayerEvent);
+      }
+    }
   }
 
   /// Set data source for playing a video from an asset.
@@ -448,6 +471,14 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   Future<void> pause() async {
     value = value.copyWith(isPlaying: false);
     await _applyPlayPause();
+  }
+
+  Future<void> disposeAdView() async {
+    await _videoPlayerPlatform.disposeAdView(_textureId);
+  }
+
+  Future<bool?> isAdPlaying() async {
+    return await _videoPlayerPlatform.isAdPlaying(_textureId);
   }
 
   Future<void> _applyLooping() async {

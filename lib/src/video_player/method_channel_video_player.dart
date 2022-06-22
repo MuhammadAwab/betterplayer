@@ -77,6 +77,7 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
         dataSourceDescription = <String, dynamic>{
           'key': dataSource.key,
           'uri': dataSource.uri,
+          'adsUri' : dataSource.adUri,
           'formatHint': dataSource.rawFormalHint,
           'headers': dataSource.headers,
           'useCache': dataSource.useCache,
@@ -159,6 +160,24 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
       <String, dynamic>{
         'textureId': textureId,
         'volume': volume,
+      },
+    );
+  }
+
+  @override
+  Future<void> disposeAdView(int? textureId) {
+    return _channel.invokeMethod<void>(
+      'disposeAdView',
+      <String, dynamic>{'textureId': textureId},
+    );
+  }
+
+  @override
+  Future<bool?> isAdPlaying(int? textureId) async{
+    return await _channel.invokeMethod<bool>(
+      'isAdPlaying',
+      <String, dynamic>{
+        'textureId': textureId,
       },
     );
   }
@@ -407,6 +426,25 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
           return VideoEvent(
             eventType: VideoEventType.pipStop,
             key: key,
+          );
+
+        case 'onAdStart':
+          return VideoEvent(
+            eventType: VideoEventType.adStart,
+            key: key,
+          );
+
+        /*case 'adStop':
+          return VideoEvent(
+            eventType: VideoEventType.adStop,
+            key: key,
+          );*/
+
+        case 'onAdCompletion':
+          return VideoEvent(
+            eventType: VideoEventType.adStop,
+            key: key,
+            duration: Duration(milliseconds: map['duration'] as int),
           );
 
         default:

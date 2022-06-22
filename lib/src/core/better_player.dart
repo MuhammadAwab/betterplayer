@@ -131,7 +131,7 @@ class _BetterPlayerState extends State<BetterPlayer>
   void onControllerEvent(BetterPlayerControllerEvent event) {
     switch (event) {
       case BetterPlayerControllerEvent.openFullscreen:
-        onFullScreenChanged();
+        //onFullScreenChanged();
         break;
       case BetterPlayerControllerEvent.hideFullscreen:
         onFullScreenChanged();

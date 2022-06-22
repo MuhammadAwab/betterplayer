@@ -1,11 +1,11 @@
 package com.jhomlala.better_player
 
-import android.R
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -18,33 +18,42 @@ import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
+import android.util.TypedValue
 import android.view.Surface
-import android.view.SurfaceView
+import android.view.ViewGroup
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
+import androidx.media.session.MediaButtonReceiver
 import androidx.work.Data
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.google.ads.interactivemedia.v3.api.AdEvent
+import com.google.ads.interactivemedia.v3.api.ImaSdkSettings
 import com.google.android.exoplayer2.*
-import com.google.android.exoplayer2.MediaItem.AdsConfiguration
 import com.google.android.exoplayer2.audio.AudioAttributes
 import com.google.android.exoplayer2.drm.*
 import com.google.android.exoplayer2.ext.ima.ImaAdsLoader
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory
-import com.google.android.exoplayer2.source.*
+import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
+import com.google.android.exoplayer2.source.MediaSourceFactory
+import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.source.dash.DashMediaSource
 import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource
 import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
-import com.google.android.exoplayer2.trackselection.TrackSelectionOverrides
+import com.google.android.exoplayer2.trackselection.DefaultTrackSelector.SelectionOverride
+import com.google.android.exoplayer2.ui.DefaultTrackNameProvider
 import com.google.android.exoplayer2.ui.PlayerNotificationManager
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.BitmapCallback
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.MediaDescriptionAdapter
 import com.google.android.exoplayer2.upstream.DataSource
-import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.util.Util
@@ -66,15 +75,15 @@ internal class BetterPlayer(
     private val eventChannel: EventChannel,
     private val textureEntry: SurfaceTextureEntry,
     customDefaultLoadControl: CustomDefaultLoadControl?,
-    result: MethodChannel.Result
+    result: MethodChannel.Result,
+    act: Activity
 ) {
-    private val exoPlayer: ExoPlayer?
+    private val exoPlayer: ExoPlayer
     private val eventSink = QueuingEventSink()
     private val trackSelector: DefaultTrackSelector = DefaultTrackSelector(context)
     private val loadControl: LoadControl
     private var isInitialized = false
     private var surface: Surface? = null
-    private var surfaceView: SurfaceView? = null
     private var key: String? = null
     private var playerNotificationManager: PlayerNotificationManager? = null
     private var refreshHandler: Handler? = null
@@ -88,8 +97,11 @@ internal class BetterPlayer(
     private val customDefaultLoadControl: CustomDefaultLoadControl =
         customDefaultLoadControl ?: CustomDefaultLoadControl()
     private var lastSendBufferedPosition = 0L
-    private var adsLoader: ImaAdsLoader? = null
-
+    private val adsLayout = FrameLayout(act)
+    private val activity = act
+    private var isAdPlay = false
+    //var nerdStatHelper: NerdStatHelper? = null
+    val adsMediaSourceFactory : MediaSourceFactory? = null
     init {
         val loadBuilder = DefaultLoadControl.Builder()
         loadBuilder.setBufferDurationsMs(
@@ -99,34 +111,102 @@ internal class BetterPlayer(
             this.customDefaultLoadControl.bufferForPlaybackAfterRebufferMs
         )
         loadControl = loadBuilder.build()
-        val dataSourceFactory: DataSource.Factory = DefaultDataSourceFactory(context)
-        adsLoader = ImaAdsLoader.Builder(context).build()
+        surface = Surface(textureEntry.surfaceTexture())
+
+        val adsLoader =
+            ImaAdsLoader.Builder(context).setAdEventListener { adEvent ->
+                if(adEvent.type == AdEvent.AdEventType.AD_BREAK_ENDED
+                    || adEvent.type == AdEvent.AdEventType.COMPLETED || adEvent.type == AdEvent.AdEventType.SKIPPED){
+                    isAdPlay = false
+                    removeAdsView()
+                    onAdsStop()
+                    sendEventAdCompletion("onAdCompletion")
+                    //sendInitAgain()
+                } else if(adEvent.type == AdEvent.AdEventType.STARTED || adEvent.type == AdEvent.AdEventType.LOADED){
+                    isAdPlay = true
+                    onAdsStart()
+                    sendEvent("onAdStart")
+                } else if(adEvent.type == AdEvent.AdEventType.AD_BREAK_FETCH_ERROR){
+                    removeAdsView()
+                }
+            }.setFocusSkipButtonWhenAvailable(true).setAdErrorListener{ adError ->
+                removeAdsView()
+            }.build()
+        val dataSourceFactory: DataSource.Factory =
+            DefaultDataSourceFactory(context, null)
+
         val mediaSourceFactory: MediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-            .setAdsLoaderProvider { unusedAdTagUri: AdsConfiguration? -> adsLoader }
-            .setAdViewProvider {
-                (context as Activity).window.decorView
-                    .findViewById(R.id.content)
+            .setAdsLoaderProvider { unusedAdTagUri: MediaItem.AdsConfiguration? -> adsLoader }
+            .setAdViewProvider{
+                val statusBarHeight =
+                    Math.ceil((25 * context.resources.displayMetrics.density).toDouble()).toInt()
+
+                val width =  activity.resources.displayMetrics.widthPixels
+                //val height =  (activity.resources.displayMetrics.widthPixels / 1.7777777778).toInt() + statusBarHeight
+                val height =  activity.resources.displayMetrics.heightPixels
+                val lp: FrameLayout.LayoutParams =
+                    FrameLayout.LayoutParams(width, height)
+                adsLayout.layoutParams = lp
+                val view = activity.findViewById(android.R.id.content) as ViewGroup
+                view.addView(adsLayout)
+                //adsLayout.bringToFront()
+                adsLayout
             }
+
+
         exoPlayer = ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
-        adsLoader?.setPlayer(exoPlayer)
+
+        adsLoader.setPlayer(exoPlayer)
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
+        /*nerdStatHelper = NerdStatHelper(
+            exoPlayer,
+            TextView(context),
+            eventSink,
+            exoPlayer.getCurrentTrackSelections(),
+            DefaultTrackNameProvider(context.getResources()),
+            context
+        )
+        nerdStatHelper?.init()*/
         setupVideoPlayer(eventChannel, textureEntry, result)
+    }
+
+    fun removeAdsView(){
+        val view = activity!!.findViewById(android.R.id.content) as ViewGroup
+        if (adsLayout != null) {
+            isAdPlay = false
+            view.removeView(adsLayout)
+            Log.d("DURATION IS :", "${exoPlayer.duration}");
+        }
+    }
+    fun onAdsStart(){
+        Log.d("DURATION IS :", "${exoPlayer.duration}");
+    }
+
+    fun onAdsStop():Long{
+        Log.d("DURATION IS :", "${exoPlayer.duration}");
+
+        return exoPlayer.duration
+    }
+
+    fun isAdPlaying(): Boolean {
+        Log.e("isAdPlay", isAdPlay.toString())
+        return isAdPlay
     }
 
     fun setDataSource(
         context: Context,
         key: String?,
         dataSource: String?,
-        adSource: String?,
+        adsLink: String?,
         formatHint: String?,
         result: MethodChannel.Result,
         headers: Map<String, String>?,
-        useCache: Boolean,
+        useCache: Map<String, String>?,
         maxCacheSize: Long,
         maxCacheFileSize: Long,
         overriddenDuration: Long,
@@ -137,8 +217,11 @@ internal class BetterPlayer(
     ) {
         this.key = key
         isInitialized = false
-        val uri = Uri.parse(dataSource)
-        val adUri = Uri.parse(adSource)
+        var adsUri: Uri? = null
+        val uri: Uri = Uri.parse(dataSource)
+        if (adsLink != null && !adsLink.isEmpty()) {
+            adsUri = Uri.parse(adsLink)
+        }
         var dataSourceFactory: DataSource.Factory?
         val userAgent = getUserAgent(headers)
         if (licenseUrl != null && licenseUrl.isNotEmpty()) {
@@ -186,55 +269,33 @@ internal class BetterPlayer(
         } else {
             drmSessionManager = null
         }
-        if (isHTTP(uri)) {
+
+        /*if (uri.toString().contains("rtmp")) {
+            dataSourceFactory = buildRtmp()
+        }else */if (isHTTP(uri)) {
             dataSourceFactory = getDataSourceFactory(userAgent, headers)
-            if (useCache && maxCacheSize > 0 && maxCacheFileSize > 0) {
-                dataSourceFactory = CacheDataSourceFactory(
-                    context,
-                    maxCacheSize,
-                    maxCacheFileSize,
-                    dataSourceFactory
-                )
-            }
+//            if (useCache && maxCacheSize > 0 && maxCacheFileSize > 0) {
+//                dataSourceFactory = CacheDataSourceFactory(
+//                    context,
+//                    maxCacheSize,
+//                    maxCacheFileSize,
+//                    dataSourceFactory
+//                )
+//            }
         } else {
-            dataSourceFactory = DefaultDataSource.Factory(context)
+            dataSourceFactory = DefaultDataSourceFactory(context, userAgent)
         }
-        /*val mediaSourceFactory: MediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-            .setAdsLoaderProvider { adsLoader }*/
+        buildMediaSource(uri, adsUri, dataSourceFactory, formatHint, cacheKey, context)
+//        if (overriddenDuration != 0L) {
+//            val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
+//            exoPlayer!!.setMediaSource(clippingMediaSource)
+//        } else {
+//            exoPlayer!!.setMediaSource(mediaSource)
+//        }
 
 
-
-
-
-
-        val mediaSource = buildMediaSource(uri, adUri, dataSourceFactory, formatHint, cacheKey, context)
-
-        /*val mediaSource = mediaSourceFactory.createMediaSource(
-            MediaItem.Builder()
-                .setUri(uri)
-                .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
-                .build()
-        )*/
-            //.createMediaSource(fromUri(uri))
-
-
-
-        // Create the MediaItem to play, specifying the content URI and ad tag URI.
-        //val mediaItem = MediaItem.Builder()
-        //    .setUri(uri)
-        //    .setAdsConfiguration(AdsConfiguration.Builder(adUri).build())
-        //    .build()
-
-
-        if (overriddenDuration != 0L) {
-            val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
-            exoPlayer?.setMediaSource(clippingMediaSource)
-        } else {
-            exoPlayer?.setMediaSource(mediaSource)
-        }
-
-        //exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
+        exoPlayer?.playWhenReady = true
         result.success(null)
     }
 
@@ -299,9 +360,7 @@ internal class BetterPlayer(
                                 //Bitmap here is already processed and it's very small, so it won't
                                 //break anything.
                                 bitmap = BitmapFactory.decodeFile(filePath)
-                                bitmap?.let { bitmap ->
-                                    callback.onBitmap(bitmap)
-                                }
+                                callback.onBitmap(bitmap!!)
                             }
                             if (state == WorkInfo.State.SUCCEEDED || state == WorkInfo.State.CANCELLED || state == WorkInfo.State.FAILED) {
                                 val uuid = imageWorkRequest.id
@@ -339,26 +398,19 @@ internal class BetterPlayer(
                 playerNotificationChannelName = DEFAULT_NOTIFICATION_CHANNEL
             }
         }
-
         playerNotificationManager = PlayerNotificationManager.Builder(
-            context, NOTIFICATION_ID,
-            playerNotificationChannelName!!
-        ).setMediaDescriptionAdapter(mediaDescriptionAdapter).build()
-
-        playerNotificationManager?.apply {
-
-            exoPlayer?.let {
-                setPlayer(ForwardingPlayer(exoPlayer))
-                setUseNextAction(false)
-                setUsePreviousAction(false)
-                setUseStopAction(false)
-            }
-
-            setupMediaSession(context)?.let {
-                setMediaSessionToken(it.sessionToken)
-            }
-        }
-
+            context,
+            NOTIFICATION_ID,
+            playerNotificationChannelName!!,
+            mediaDescriptionAdapter
+        ).build()
+        playerNotificationManager!!.setPlayer(exoPlayer)
+        playerNotificationManager!!.setUseNextAction(false)
+        playerNotificationManager!!.setUsePreviousAction(false)
+        playerNotificationManager!!.setUseStopAction(false)
+        val mediaSession = setupMediaSession(context, false)
+        playerNotificationManager!!.setMediaSessionToken(mediaSession.sessionToken)
+        //playerNotificationManager!!.setControlDispatcher(setupControlDispatcher())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             refreshHandler = Handler(Looper.getMainLooper())
             refreshRunnable = Runnable {
@@ -373,90 +425,166 @@ internal class BetterPlayer(
                         .setState(PlaybackStateCompat.STATE_PAUSED, position, 1.0f)
                         .build()
                 }
-                mediaSession?.setPlaybackState(playbackState)
-                refreshHandler?.postDelayed(refreshRunnable!!, 1000)
+                mediaSession.setPlaybackState(playbackState)
+                refreshHandler!!.postDelayed(refreshRunnable!!, 1000)
             }
-            refreshHandler?.postDelayed(refreshRunnable!!, 0)
+            refreshHandler!!.postDelayed(refreshRunnable!!, 0)
         }
         exoPlayerEventListener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                mediaSession?.setMetadata(
+                mediaSession.setMetadata(
                     MediaMetadataCompat.Builder()
                         .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, getDuration())
                         .build()
                 )
             }
         }
-        exoPlayerEventListener?.let { exoPlayerEventListener ->
-            exoPlayer?.addListener(exoPlayerEventListener)
-        }
-        exoPlayer?.seekTo(0)
+        exoPlayer!!.addListener(exoPlayerEventListener!!)
+        exoPlayer.seekTo(0)
     }
 
+    /*private fun setupControlDispatcher(): ControlDispatcher {
+        return object : ControlDispatcher {
+            override fun dispatchPrepare(player: Player): Boolean {
+                return false
+            }
+
+            override fun dispatchSetPlayWhenReady(player: Player, playWhenReady: Boolean): Boolean {
+                if (player.playWhenReady) {
+                    sendEvent("pause")
+                } else {
+                    sendEvent("play")
+                }
+                return true
+            }
+
+            override fun dispatchSeekTo(
+                player: Player,
+                windowIndex: Int,
+                positionMs: Long
+            ): Boolean {
+                sendSeekToEvent(positionMs)
+                return true
+            }
+
+            override fun dispatchPrevious(player: Player): Boolean {
+                return false
+            }
+
+            override fun dispatchNext(player: Player): Boolean {
+                return false
+            }
+
+            override fun dispatchRewind(player: Player): Boolean {
+                sendSeekToEvent(player.currentPosition - 5000)
+                return false
+            }
+
+            override fun dispatchFastForward(player: Player): Boolean {
+                sendSeekToEvent(player.currentPosition + 5000)
+                return true
+            }
+
+            override fun dispatchSetRepeatMode(player: Player, repeatMode: Int): Boolean {
+                return false
+            }
+
+            override fun dispatchSetShuffleModeEnabled(
+                player: Player,
+                shuffleModeEnabled: Boolean
+            ): Boolean {
+                return false
+            }
+
+            override fun dispatchStop(player: Player, reset: Boolean): Boolean {
+                return false
+            }
+
+            override fun dispatchSetPlaybackParameters(
+                player: Player,
+                playbackParameters: PlaybackParameters
+            ): Boolean {
+                return false
+            }
+
+            override fun isRewindEnabled(): Boolean {
+                return true
+            }
+
+            override fun isFastForwardEnabled(): Boolean {
+                return true
+            }
+        }
+    }*/
+
     fun disposeRemoteNotifications() {
-        exoPlayerEventListener?.let { exoPlayerEventListener ->
-            exoPlayer?.removeListener(exoPlayerEventListener)
+        if (exoPlayerEventListener != null) {
+            exoPlayer!!.removeListener(exoPlayerEventListener!!)
         }
         if (refreshHandler != null) {
-            refreshHandler?.removeCallbacksAndMessages(null)
+            refreshHandler!!.removeCallbacksAndMessages(null)
             refreshHandler = null
             refreshRunnable = null
         }
         if (playerNotificationManager != null) {
-            playerNotificationManager?.setPlayer(null)
+            playerNotificationManager!!.setPlayer(null)
         }
         bitmap = null
     }
 
+
     private fun buildMediaSource(
-        uri: Uri,
-        adUri: Uri,
+        uri: Uri,adsUri: Uri?,
         mediaDataSourceFactory: DataSource.Factory,
         formatHint: String?,
         cacheKey: String?,
         context: Context
-    ): MediaSource {
-        val type: Int
-        if (formatHint == null) {
-            var lastPathSegment = uri.lastPathSegment
-            if (lastPathSegment == null) {
-                lastPathSegment = ""
-            }
-            type = Util.inferContentType(lastPathSegment)
-        } else {
-            type = when (formatHint) {
-                FORMAT_SS -> C.TYPE_SS
-                FORMAT_DASH -> C.TYPE_DASH
-                FORMAT_HLS -> C.TYPE_HLS
-                FORMAT_OTHER -> C.TYPE_OTHER
-                else -> -1
-            }
-        }
+    ) {
+//        val type: Int
+        @C.ContentType val type: Int = Util.inferContentType(uri, null)
+
+//        if (formatHint == null) {
+//            var lastPathSegment = uri.lastPathSegment
+//            if (lastPathSegment == null) {
+//                lastPathSegment = ""
+//            }
+//            type = Util.inferContentType(lastPathSegment)
+//        } else {
+//            type = when (formatHint) {
+//                FORMAT_SS -> C.TYPE_SS
+//                FORMAT_DASH -> C.TYPE_DASH
+//                FORMAT_HLS -> C.TYPE_HLS
+//                FORMAT_OTHER -> C.TYPE_OTHER
+//                else -> -1
+//            }
+//        }
         val mediaItemBuilder = MediaItem.Builder()
         mediaItemBuilder.setUri(uri)
-        if (adUri.toString().isNotEmpty()) {
-            Log.d("AD URI TAG", "AD URI IS NOT NULL AND COMES HERE");
-            val adsConfiguration: AdsConfiguration = AdsConfiguration.Builder(adUri).build()
-            mediaItemBuilder.setAdsConfiguration(adsConfiguration)
+        if (adsUri != null) {
+//            val adsConfiguration: MediaItem.AdsConfiguration = MediaItem.AdsConfiguration(adsUri)
+            mediaItemBuilder.setAdsConfiguration(MediaItem.AdsConfiguration.Builder(adsUri).build())
+            mediaItemBuilder.setAdTagUri(adsUri)
         }
         if (cacheKey != null && cacheKey.isNotEmpty()) {
             mediaItemBuilder.setCustomCacheKey(cacheKey)
         }
         val mediaItem = mediaItemBuilder.build()
         var drmSessionManagerProvider: DrmSessionManagerProvider? = null
-        drmSessionManager?.let { drmSessionManager ->
-            drmSessionManagerProvider = DrmSessionManagerProvider { drmSessionManager }
+        if (drmSessionManager != null) {
+            drmSessionManagerProvider = DrmSessionManagerProvider { drmSessionManager!! }
         }
-        return when (type) {
+
+        exoPlayer?.playWhenReady = true
+        val mediaSource = when (type) {
             C.TYPE_SS -> SsMediaSource.Factory(
                 DefaultSsChunkSource.Factory(mediaDataSourceFactory),
-                DefaultDataSource.Factory(context, mediaDataSourceFactory)
+                DefaultDataSourceFactory(context, null, mediaDataSourceFactory)
             )
                 .setDrmSessionManagerProvider(drmSessionManagerProvider)
                 .createMediaSource(mediaItem)
             C.TYPE_DASH -> DashMediaSource.Factory(
                 DefaultDashChunkSource.Factory(mediaDataSourceFactory),
-                DefaultDataSource.Factory(context, mediaDataSourceFactory)
+                DefaultDataSourceFactory(context, null, mediaDataSourceFactory)
             )
                 .setDrmSessionManagerProvider(drmSessionManagerProvider)
                 .createMediaSource(mediaItem)
@@ -473,7 +601,15 @@ internal class BetterPlayer(
                 throw IllegalStateException("Unsupported type: $type")
             }
         }
+        exoPlayer?.setMediaSource(mediaSource)
+        exoPlayer?.setMediaItem(mediaItem)
+
     }
+
+    /*private fun buildRtmp(): DataSource.Factory{
+        return RtmpDataSource.Factory()
+    }*/
+
 
     private fun setupVideoPlayer(
         eventChannel: EventChannel, textureEntry: SurfaceTextureEntry, result: MethodChannel.Result
@@ -488,10 +624,9 @@ internal class BetterPlayer(
                     eventSink.setDelegate(null)
                 }
             })
-        surface = Surface(textureEntry.surfaceTexture())
-        exoPlayer?.setVideoSurface(surface)
+        exoPlayer!!.setVideoSurface(surface)
         setAudioAttributes(exoPlayer, true)
-        exoPlayer?.addListener(object : Player.Listener {
+        exoPlayer.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
                     Player.STATE_BUFFERING -> {
@@ -531,7 +666,7 @@ internal class BetterPlayer(
     }
 
     fun sendBufferingUpdate(isFromBufferingStart: Boolean) {
-        val bufferedPosition = exoPlayer?.bufferedPosition ?: 0L
+        val bufferedPosition = exoPlayer!!.bufferedPosition
         if (isFromBufferingStart || bufferedPosition != lastSendBufferedPosition) {
             val event: MutableMap<String, Any> = HashMap()
             event["event"] = "bufferingUpdate"
@@ -543,9 +678,8 @@ internal class BetterPlayer(
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun setAudioAttributes(exoPlayer: ExoPlayer?, mixWithOthers: Boolean) {
-        val audioComponent = exoPlayer?.audioComponent ?: return
+        val audioComponent = exoPlayer!!.audioComponent ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             audioComponent.setAudioAttributes(
                 AudioAttributes.Builder().setContentType(C.CONTENT_TYPE_MOVIE).build(),
@@ -560,27 +694,27 @@ internal class BetterPlayer(
     }
 
     fun play() {
-        exoPlayer?.playWhenReady = true
+        exoPlayer!!.playWhenReady = true
     }
 
     fun pause() {
-        exoPlayer?.playWhenReady = false
+        exoPlayer!!.playWhenReady = false
     }
 
     fun setLooping(value: Boolean) {
-        exoPlayer?.repeatMode = if (value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+        exoPlayer!!.repeatMode = if (value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
     }
 
     fun setVolume(value: Double) {
         val bracketedValue = max(0.0, min(1.0, value))
             .toFloat()
-        exoPlayer?.volume = bracketedValue
+        exoPlayer!!.volume = bracketedValue
     }
 
     fun setSpeed(value: Double) {
         val bracketedValue = value.toFloat()
         val playbackParameters = PlaybackParameters(bracketedValue)
-        exoPlayer?.playbackParameters = playbackParameters
+        exoPlayer!!.playbackParameters = playbackParameters
     }
 
     fun setTrackParameters(width: Int, height: Int, bitrate: Int) {
@@ -599,24 +733,20 @@ internal class BetterPlayer(
     }
 
     fun seekTo(location: Int) {
-        exoPlayer?.seekTo(location.toLong())
+        exoPlayer!!.seekTo(location.toLong())
     }
 
     val position: Long
-        get() = exoPlayer?.currentPosition ?: 0L
-
+        get() = exoPlayer!!.currentPosition
     val absolutePosition: Long
         get() {
-            val timeline = exoPlayer?.currentTimeline
-            timeline?.let {
-                if (!timeline.isEmpty) {
-                    val windowStartTimeMs =
-                        timeline.getWindow(0, Timeline.Window()).windowStartTimeMs
-                    val pos = exoPlayer?.currentPosition ?: 0L
-                    return windowStartTimeMs + pos
-                }
+            val timeline = exoPlayer!!.currentTimeline
+            if (!timeline.isEmpty) {
+                val windowStartTimeMs = timeline.getWindow(0, Timeline.Window()).windowStartTimeMs
+                val pos = exoPlayer.currentPosition
+                return windowStartTimeMs + pos
             }
-            return exoPlayer?.currentPosition ?: 0L
+            return exoPlayer.currentPosition
         }
 
     private fun sendInitialized() {
@@ -625,15 +755,14 @@ internal class BetterPlayer(
             event["event"] = "initialized"
             event["key"] = key
             event["duration"] = getDuration()
-            if (exoPlayer?.videoFormat != null) {
-                val videoFormat = exoPlayer.videoFormat
-                var width = videoFormat?.width
-                var height = videoFormat?.height
-                val rotationDegrees = videoFormat?.rotationDegrees
+            if (exoPlayer!!.videoSize != null) {
+                var width = exoPlayer!!.videoSize.width
+                var height = exoPlayer!!.videoSize.height
+                val rotationDegrees = exoPlayer!!.videoSize.unappliedRotationDegrees
                 // Switch the width/height if video was taken in portrait mode
                 if (rotationDegrees == 90 || rotationDegrees == 270) {
-                    width = exoPlayer.videoFormat?.height
-                    height = exoPlayer.videoFormat?.width
+                    width = exoPlayer.videoSize!!.height
+                    height = exoPlayer.videoSize!!.width
                 }
                 event["width"] = width
                 event["height"] = height
@@ -642,40 +771,40 @@ internal class BetterPlayer(
         }
     }
 
-    private fun getDuration(): Long = exoPlayer?.duration ?: 0L
+
+    private fun getDuration(): Long = exoPlayer!!.duration
 
     /**
      * Create media session which will be used in notifications, pip mode.
      *
      * @param context                - android context
+     * @param setupControlDispatcher - should add control dispatcher to created MediaSession
      * @return - configured MediaSession instance
      */
-    @SuppressLint("InlinedApi")
-    fun setupMediaSession(context: Context?): MediaSessionCompat? {
+    fun setupMediaSession(context: Context?, setupControlDispatcher: Boolean): MediaSessionCompat {
         mediaSession?.release()
-        context?.let {
-
-            val mediaButtonIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                0, mediaButtonIntent,
-                PendingIntent.FLAG_IMMUTABLE
-            )
-            val mediaSession = MediaSessionCompat(context, TAG, null, pendingIntent)
-            mediaSession.setCallback(object : MediaSessionCompat.Callback() {
-                override fun onSeekTo(pos: Long) {
-                    sendSeekToEvent(pos)
-                    super.onSeekTo(pos)
-                }
-            })
-            mediaSession.isActive = true
-            val mediaSessionConnector = MediaSessionConnector(mediaSession)
-            mediaSessionConnector.setPlayer(exoPlayer)
-            this.mediaSession = mediaSession
-            return mediaSession
+        val mediaButtonReceiver = ComponentName(context!!, MediaButtonReceiver::class.java)
+        val mediaButtonIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            0, mediaButtonIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val mediaSession = MediaSessionCompat(context, TAG, null, pendingIntent)
+        mediaSession.setCallback(object : MediaSessionCompat.Callback() {
+            override fun onSeekTo(pos: Long) {
+                sendSeekToEvent(pos)
+                super.onSeekTo(pos)
+            }
+        })
+        mediaSession.isActive = true
+        val mediaSessionConnector = MediaSessionConnector(mediaSession)
+        if (setupControlDispatcher) {
+            //mediaSessionConnector.setControlDispatcher(setupControlDispatcher())
         }
-        return null
-
+        mediaSessionConnector.setPlayer(exoPlayer)
+        this.mediaSession = mediaSession
+        return mediaSession
     }
 
     fun onPictureInPictureStatusChanged(inPip: Boolean) {
@@ -686,9 +815,22 @@ internal class BetterPlayer(
 
     fun disposeMediaSession() {
         if (mediaSession != null) {
-            mediaSession?.release()
+            mediaSession!!.release()
         }
         mediaSession = null
+    }
+
+    private fun sendEvent(eventType: String) {
+        val event: MutableMap<String, Any> = HashMap()
+        event["event"] = eventType
+        eventSink.success(event)
+    }
+
+    private fun sendEventAdCompletion(eventType: String) {
+        val event: MutableMap<String, Any> = HashMap()
+        event["event"] = eventType
+        event["duration"] = getDuration()
+        eventSink.success(event)
     }
 
     fun setAudioTrack(name: String, index: Int) {
@@ -746,23 +888,20 @@ internal class BetterPlayer(
         val mappedTrackInfo = trackSelector.currentMappedTrackInfo
         if (mappedTrackInfo != null) {
             val builder = trackSelector.parameters.buildUpon()
+            builder.clearSelectionOverrides(rendererIndex)
                 .setRendererDisabled(rendererIndex, false)
-                .setTrackSelectionOverrides(
-                    TrackSelectionOverrides.Builder().addOverride(
-                        TrackSelectionOverrides.TrackSelectionOverride(
-                            mappedTrackInfo.getTrackGroups(
-                                rendererIndex
-                            ).get(groupIndex)
-                        )
-                    ).build()
-                )
-
+            val tracks = intArrayOf(groupElementIndex)
+            val override = SelectionOverride(groupIndex, *tracks)
+            builder.setSelectionOverride(
+                rendererIndex,
+                mappedTrackInfo.getTrackGroups(rendererIndex), override
+            )
             trackSelector.setParameters(builder)
         }
     }
 
     private fun sendSeekToEvent(positionMs: Long) {
-        exoPlayer?.seekTo(positionMs)
+        exoPlayer!!.seekTo(positionMs)
         val event: MutableMap<String, Any> = HashMap()
         event["event"] = "seek"
         event["position"] = positionMs
@@ -777,11 +916,13 @@ internal class BetterPlayer(
         disposeMediaSession()
         disposeRemoteNotifications()
         if (isInitialized) {
-            exoPlayer?.stop()
+            exoPlayer!!.stop()
         }
         textureEntry.release()
         eventChannel.setStreamHandler(null)
-        surface?.release()
+        if (surface != null) {
+            surface!!.release()
+        }
         exoPlayer?.release()
     }
 
@@ -809,12 +950,10 @@ internal class BetterPlayer(
         private const val NOTIFICATION_ID = 20772077
 
         //Clear cache without accessing BetterPlayerCache.
-        fun clearCache(context: Context?, result: MethodChannel.Result) {
+        fun clearCache(context: Context, result: MethodChannel.Result) {
             try {
-                context?.let { context ->
-                    val file = File(context.cacheDir, "betterPlayerCache")
-                    deleteDirectory(file)
-                }
+                val file = File(context.cacheDir, "betterPlayerCache")
+                deleteDirectory(file)
                 result.success(null)
             } catch (exception: Exception) {
                 Log.e(TAG, exception.toString())
@@ -856,21 +995,17 @@ internal class BetterPlayer(
                     headers[headerKey]
                 )
             }
-            if (dataSource != null && context != null) {
-                val cacheWorkRequest = OneTimeWorkRequest.Builder(CacheWorker::class.java)
-                    .addTag(dataSource)
-                    .setInputData(dataBuilder.build()).build()
-                WorkManager.getInstance(context).enqueue(cacheWorkRequest)
-            }
+            val cacheWorkRequest = OneTimeWorkRequest.Builder(CacheWorker::class.java)
+                .addTag(dataSource!!)
+                .setInputData(dataBuilder.build()).build()
+            WorkManager.getInstance(context!!).enqueue(cacheWorkRequest)
             result.success(null)
         }
 
         //Stop pre cache of video with given url. If there's no work manager job for given url, then
         //it will be ignored.
         fun stopPreCache(context: Context?, url: String?, result: MethodChannel.Result) {
-            if (url != null && context != null) {
-                WorkManager.getInstance(context).cancelAllWorkByTag(url)
-            }
+            WorkManager.getInstance(context!!).cancelAllWorkByTag(url!!)
             result.success(null)
         }
     }

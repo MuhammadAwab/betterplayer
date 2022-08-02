@@ -100,6 +100,7 @@ internal class BetterPlayer(
     private val adsLayout = FrameLayout(act)
     private val activity = act
     private var isAdPlay = false
+    private var originalDuration = 0L
     //var nerdStatHelper: NerdStatHelper? = null
     val adsMediaSourceFactory : MediaSourceFactory? = null
     init {
@@ -217,6 +218,7 @@ internal class BetterPlayer(
     ) {
         this.key = key
         isInitialized = false
+        originalDuration = overriddenDuration
         var adsUri: Uri? = null
         val uri: Uri = Uri.parse(dataSource)
         if (adsLink != null && !adsLink.isEmpty()) {
@@ -772,7 +774,7 @@ internal class BetterPlayer(
     }
 
 
-    private fun getDuration(): Long = exoPlayer!!.duration
+    private fun getDuration(): Long = originalDuration//exoPlayer!!.duration
 
     /**
      * Create media session which will be used in notifications, pip mode.

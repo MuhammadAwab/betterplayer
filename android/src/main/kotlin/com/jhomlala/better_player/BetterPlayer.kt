@@ -39,9 +39,7 @@ import com.google.android.exoplayer2.drm.*
 import com.google.android.exoplayer2.ext.ima.ImaAdsLoader
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory
-import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
-import com.google.android.exoplayer2.source.MediaSourceFactory
-import com.google.android.exoplayer2.source.ProgressiveMediaSource
+import com.google.android.exoplayer2.source.*
 import com.google.android.exoplayer2.source.dash.DashMediaSource
 import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource
 import com.google.android.exoplayer2.source.hls.HlsMediaSource
@@ -54,6 +52,7 @@ import com.google.android.exoplayer2.ui.PlayerNotificationManager
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.BitmapCallback
 import com.google.android.exoplayer2.ui.PlayerNotificationManager.MediaDescriptionAdapter
 import com.google.android.exoplayer2.upstream.DataSource
+import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.util.Util
@@ -112,7 +111,8 @@ internal class BetterPlayer(
             this.customDefaultLoadControl.bufferForPlaybackAfterRebufferMs
         )
         loadControl = loadBuilder.build()
-        surface = Surface(textureEntry.surfaceTexture())
+
+        //surface = Surface(textureEntry.surfaceTexture())
 
         val adsLoader =
             ImaAdsLoader.Builder(context).setAdEventListener { adEvent ->
@@ -153,7 +153,6 @@ internal class BetterPlayer(
                 //adsLayout.bringToFront()
                 adsLayout
             }
-
 
         exoPlayer = ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
@@ -287,7 +286,23 @@ internal class BetterPlayer(
         } else {
             dataSourceFactory = DefaultDataSourceFactory(context, userAgent)
         }
-        buildMediaSource(uri, adsUri, dataSourceFactory, formatHint, cacheKey, context)
+
+        if(adsUri!=null){
+            buildMediaSource(uri, adsUri, dataSourceFactory, formatHint, cacheKey, context)
+            exoPlayer?.prepare()
+            exoPlayer?.playWhenReady = true
+        }
+        else{
+            val mediaSource = buildMediaSourceWithoutAd(uri, dataSourceFactory, formatHint, cacheKey, context)
+            if (overriddenDuration != 0L) {
+                val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
+                exoPlayer?.setMediaSource(clippingMediaSource)
+            } else {
+                exoPlayer?.setMediaSource(mediaSource)
+            }
+            exoPlayer?.prepare()
+        }
+
 //        if (overriddenDuration != 0L) {
 //            val clippingMediaSource = ClippingMediaSource(mediaSource, 0, overriddenDuration * 1000)
 //            exoPlayer!!.setMediaSource(clippingMediaSource)
@@ -296,8 +311,7 @@ internal class BetterPlayer(
 //        }
 
 
-        exoPlayer?.prepare()
-        exoPlayer?.playWhenReady = true
+
         result.success(null)
     }
 
@@ -562,7 +576,7 @@ internal class BetterPlayer(
 //        }
         val mediaItemBuilder = MediaItem.Builder()
         mediaItemBuilder.setUri(uri)
-        if (adsUri != null) {
+        if (adsUri != null && adsUri.toString().isNotEmpty()) {
 //            val adsConfiguration: MediaItem.AdsConfiguration = MediaItem.AdsConfiguration(adsUri)
             mediaItemBuilder.setAdsConfiguration(MediaItem.AdsConfiguration.Builder(adsUri).build())
             mediaItemBuilder.setAdTagUri(adsUri)
@@ -608,6 +622,67 @@ internal class BetterPlayer(
 
     }
 
+    private fun buildMediaSourceWithoutAd(
+        uri: Uri,
+        mediaDataSourceFactory: DataSource.Factory,
+        formatHint: String?,
+        cacheKey: String?,
+        context: Context
+    ): MediaSource {
+        val type: Int
+        if (formatHint == null) {
+            var lastPathSegment = uri.lastPathSegment
+            if (lastPathSegment == null) {
+                lastPathSegment = ""
+            }
+            type = Util.inferContentType(lastPathSegment)
+        } else {
+            type = when (formatHint) {
+                FORMAT_SS -> C.TYPE_SS
+                FORMAT_DASH -> C.TYPE_DASH
+                FORMAT_HLS -> C.TYPE_HLS
+                FORMAT_OTHER -> C.TYPE_OTHER
+                else -> -1
+            }
+        }
+        val mediaItemBuilder = MediaItem.Builder()
+        mediaItemBuilder.setUri(uri)
+        if (cacheKey != null && cacheKey.isNotEmpty()) {
+            mediaItemBuilder.setCustomCacheKey(cacheKey)
+        }
+        val mediaItem = mediaItemBuilder.build()
+        var drmSessionManagerProvider: DrmSessionManagerProvider? = null
+        drmSessionManager?.let { drmSessionManager ->
+            drmSessionManagerProvider = DrmSessionManagerProvider { drmSessionManager }
+        }
+        return when (type) {
+            C.TYPE_SS -> SsMediaSource.Factory(
+                DefaultSsChunkSource.Factory(mediaDataSourceFactory),
+                DefaultDataSource.Factory(context, mediaDataSourceFactory)
+            )
+                .setDrmSessionManagerProvider(drmSessionManagerProvider)
+                .createMediaSource(mediaItem)
+            C.TYPE_DASH -> DashMediaSource.Factory(
+                DefaultDashChunkSource.Factory(mediaDataSourceFactory),
+                DefaultDataSource.Factory(context, mediaDataSourceFactory)
+            )
+                .setDrmSessionManagerProvider(drmSessionManagerProvider)
+                .createMediaSource(mediaItem)
+            C.TYPE_HLS -> HlsMediaSource.Factory(mediaDataSourceFactory)
+                .setDrmSessionManagerProvider(drmSessionManagerProvider)
+                .createMediaSource(mediaItem)
+            C.TYPE_OTHER -> ProgressiveMediaSource.Factory(
+                mediaDataSourceFactory,
+                DefaultExtractorsFactory()
+            )
+                .setDrmSessionManagerProvider(drmSessionManagerProvider)
+                .createMediaSource(mediaItem)
+            else -> {
+                throw IllegalStateException("Unsupported type: $type")
+            }
+        }
+    }
+
     /*private fun buildRtmp(): DataSource.Factory{
         return RtmpDataSource.Factory()
     }*/
@@ -626,6 +701,7 @@ internal class BetterPlayer(
                     eventSink.setDelegate(null)
                 }
             })
+        surface = Surface(textureEntry.surfaceTexture())
         exoPlayer!!.setVideoSurface(surface)
         setAudioAttributes(exoPlayer, true)
         exoPlayer.addListener(object : Player.Listener {
